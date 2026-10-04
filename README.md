@@ -1,5 +1,7 @@
 # term0
 
+<img src="assets/term0.png" width="128" align="right" alt="term0 icon">
+
 `term0` is a small serial terminal written in C++ with Qt 6. It is intended
 for Windows, Linux, and macOS.
 
