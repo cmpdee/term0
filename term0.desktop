@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=term0
+Comment=Minimal cross-platform serial terminal
+Exec=term0
+Icon=term0
+Terminal=false
+Categories=Utility;Development;

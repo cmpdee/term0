@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>assets/term0.png</file>
+        <file>assets/term0-16.png</file>
+        <file>assets/term0-20.png</file>
+        <file>assets/term0-24.png</file>
+        <file>assets/term0-32.png</file>
+        <file>assets/term0-48.png</file>
+        <file>assets/term0-64.png</file>
+        <file>assets/term0-128.png</file>
+        <file>assets/term0-256.png</file>
+    </qresource>
+</RCC>

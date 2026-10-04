@@ -1,0 +1,11 @@
+/build/
+/build-*/
+/dist/
+/.cache/
+CMakeUserPresets.json
+*.user
+*.user.*
+*.autosave
+*.zip
+.DS_Store
+Thumbs.db
