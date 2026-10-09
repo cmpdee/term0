@@ -12,6 +12,8 @@ struct SerialSettings {
     QSerialPort::Parity parity = QSerialPort::NoParity;
     QSerialPort::StopBits stopBits = QSerialPort::OneStop;
     QSerialPort::FlowControl flowControl = QSerialPort::NoFlowControl;
+    bool dataTerminalReady = true;
+    bool requestToSend = false;
 };
 Q_DECLARE_METATYPE(SerialSettings)
 
@@ -25,7 +27,7 @@ public slots:
     void openPort(const SerialSettings &settings);
     void closePort();
     void writeData(const QByteArray &data);
-    void startLog(const QString &path);
+    void startLog(const QString &path, int format, bool timestamps);
     void stopLog();
 
 signals:
@@ -43,8 +45,18 @@ private:
     void ensureLogFile();
     void closeLogFile();
     static QByteArray sanitizeTextBytes(const QByteArray &data);
+    static QByteArray formatHexDumpLine(const QByteArray &data, quint64 offset);
+    QByteArray timestampPrefix() const;
+    void writeLogChunk(const QByteArray &chunk);
+    bool writeLogData(const QByteArray &data);
+    void flushPendingLogData();
 
     QSerialPort *m_port = nullptr;
     QFile *m_logFile = nullptr;
     QString m_logPath;
+    int m_logFormat = 0;
+    bool m_logTimestamps = false;
+    bool m_logLineStart = true;
+    QByteArray m_logDumpTail;
+    quint64 m_logDumpOffset = 0;
 };

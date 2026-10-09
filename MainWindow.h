@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
+#include <QFont>
 #include <QMainWindow>
 #include <QSerialPortInfo>
 #include <QThread>
@@ -28,7 +29,7 @@ signals:
     void requestOpen(const SerialSettings &settings);
     void requestClose();
     void requestWrite(const QByteArray &data);
-    void requestStartLog(const QString &path);
+    void requestStartLog(const QString &path, int format, bool timestamps);
     void requestStopLog();
 
 private slots:
@@ -43,6 +44,8 @@ private slots:
     void flushTerminal();
     void updateSessionStatus();
     void renderDisplayHistory();
+    void showSerialSettings();
+    void toggleHiddenTheme();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -50,6 +53,14 @@ protected:
 private:
     void buildUi();
     void setConnectedUi(bool connected);
+    void loadPreferences();
+    void savePreferences() const;
+    void applyHiddenTheme(bool enabled);
+    void applyTerminalFont();
+    void adjustTerminalFontSize(int steps);
+    void resetTerminalFontSize();
+    void updateConnectAppearance();
+    QString framingSummary() const;
     SerialSettings currentSettings() const;
     static QString portLabel(const QSerialPortInfo &info);
     static QByteArray sanitizeTextBytes(const QByteArray &data);
@@ -91,6 +102,8 @@ private:
     QString m_preferredPort;
     QString m_connectedPort;
     qint32 m_connectedBaud = 0;
+    SerialSettings m_serialOptions;
+    SerialSettings m_connectedSettings;
     quint64 m_rxBytes = 0;
     quint64 m_txBytes = 0;
     qint64 m_lastElapsedMs = 0;
@@ -105,8 +118,14 @@ private:
     bool m_logActive = false;
     quint64 m_logBytes = 0;
     QString m_logPath;
+    int m_logFormat = 0; // 0 = Text, 1 = HEX, 2 = HEX dump
+    bool m_logTimestamps = false;
 
     QThread m_serialThread;
     SerialWorker *m_serialWorker = nullptr;
     bool m_connected = false;
+    bool m_hiddenTheme = false;
+    QFont m_standardUiFont;
+    qreal m_defaultTerminalPointSize = 10.0;
+    qreal m_terminalPointSize = 10.0;
 };

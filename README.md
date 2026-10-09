@@ -1,15 +1,99 @@
 # term0
 
+<img src="assets/term0.png" width="128" align="right" alt="term0 icon">
+
 `term0` is a small serial terminal written in C++ with Qt 6. It is intended
 for Windows, Linux, and macOS.
 
 Current functionality includes serial port discovery and hot-plug handling,
 text and HEX transmit, Text/HEX/HEX dump receive views, command history,
-text logging, RX/TX counters, and connection time.
+text logging, RX/TX counters, connection time, and configurable serial framing.
 
-Serial framing is currently fixed to **8-N-1** (8 data bits, no parity, one stop
-bit) with **flow control disabled**. Only the serial port and baud rate are
-configurable.
+Serial port and baud rate are available on the main window. `Ctrl+Alt+S` opens
+the settings window with **Serial**, **View**, and **Log** tabs. The Serial tab
+contains data bits, parity, stop bits, flow control, DTR, and RTS.
+
+## Usage
+
+The main window keeps port and baud rate visible. Press `Ctrl+Alt+S` to open
+settings. Serial parameters are applied to the next connection. View and log
+preferences can be changed without disconnecting. Settings are saved between
+runs in a regular INI file. On Windows the file is stored at
+`%APPDATA%\term0\term0.ini`; on Linux it is stored at
+`~/.config/term0/term0.ini`.
+
+Select a serial port and baud rate, then press **Connect**. Port discovery is
+automatic. `F5` forces a manual rescan.
+
+If an open USB serial device is removed, `term0` disconnects it. If the same
+port appears again, it is selected again but is not automatically reconnected.
+
+### Receive modes
+
+**Text** displays printable data normally. CR, LF, and TAB are preserved;
+other control bytes are displayed as `.`.
+
+**HEX** displays every received byte as hexadecimal. A received `0A` starts a
+new display row.
+
+**HEX dump** displays 16 bytes per row with offsets and an ASCII column:
+
+```text
+00000000  00 4D 50 59 3A 20 63 61  6E 27 74 20 6D 6F 75 6E  |.MPY: can't moun|
+00000010  74 20 66 6C 61 73 68 0D  0A 4D 69 63 72 6F 50 79  |t flash..MicroPy|
+```
+
+### Transmit
+
+Enter text in the Send field and press Enter or **Send**. **CR** and **LF**
+control which line ending bytes are appended in text mode.
+
+Use Up/Down in the Send field to browse commands sent during the current
+application session.
+
+Enable **HEX** next to the Send field to send byte values instead of text:
+
+```text
+00 4D 50 59
+```
+
+Compact input such as `004D5059` and optional `0x` prefixes are also accepted.
+CR/LF are not added automatically in HEX transmit mode; send `0D` and `0A`
+explicitly when needed.
+
+### Logging
+
+The **Log** tab in Settings selects the live log format: **Text**, **HEX**, or
+**HEX dump**. Timestamps can also be enabled. These options are used the next
+time a live log is started.
+
+Press **Log** and choose a `.txt` file. The suggested filename reflects the
+selected format (`term0-log.txt`, `term0-log_hex.txt`, or
+`term0-log_hexdump.txt`). When timestamps are enabled, the current local date
+and time are appended to the suggested filename. New RX data is written to that
+file from that point onward. Press **Stop Log** to flush and close the file.
+
+**Text** logging follows the Text receive convention: CR/LF/TAB are preserved
+and other control bytes are written as `.`. **HEX** follows the HEX view line
+break behavior. **HEX dump** writes 16-byte rows with offsets and an ASCII
+column. With timestamps enabled, each logged row/line is prefixed with a local
+date and time.
+
+`Ctrl+S` still saves the retained RX history as plain text. This can be used
+when output was received before live logging was started.
+
+### Other controls
+
+- **Clear** clears the terminal display.
+- `Ctrl+L` also clears the terminal display.
+- `Ctrl++` / `Ctrl+-` changes the terminal font size.
+- `Ctrl+0` resets the terminal font size.
+- `Ctrl` + mouse wheel also changes the terminal font size.
+- `F5` forces a serial port rescan.
+- The status line shows the current port/settings, connection time, and RX/TX
+  byte counters. While logging it also shows the logged byte count.
+
+A small clue in the View tab points to one undocumented shortcut.
 
 ## Requirements
 
@@ -166,65 +250,6 @@ the executable.
 open ./build/term0.app
 ```
 
-## Usage
-
-Select a serial port and baud rate, then press **Connect**. Port discovery is
-automatic. `F5` forces a manual rescan.
-
-If an open USB serial device is removed, `term0` disconnects it. If the same
-port appears again, it is selected again but is not automatically reconnected.
-
-### Receive modes
-
-**Text** displays printable data normally. CR, LF, and TAB are preserved;
-other control bytes are displayed as `.`.
-
-**HEX** displays every received byte as hexadecimal. A received `0A` starts a
-new display row.
-
-**HEX dump** displays 16 bytes per row with offsets and an ASCII column:
-
-```text
-00000000  00 4D 50 59 3A 20 63 61  6E 27 74 20 6D 6F 75 6E  |.MPY: can't moun|
-00000010  74 20 66 6C 61 73 68 0D  0A 4D 69 63 72 6F 50 79  |t flash..MicroPy|
-```
-
-### Transmit
-
-Enter text in the Send field and press Enter or **Send**. **CR** and **LF**
-control which line ending bytes are appended in text mode.
-
-Use Up/Down in the Send field to browse commands sent during the current
-application session.
-
-Enable **HEX** next to the Send field to send byte values instead of text:
-
-```text
-00 4D 50 59
-```
-
-Compact input such as `004D5059` and optional `0x` prefixes are also accepted.
-CR/LF are not added automatically in HEX transmit mode; send `0D` and `0A`
-explicitly when needed.
-
-### Logging
-
-Press **Log** and choose a `.txt` file. New RX data is written to that file from
-that point onward. Press **Stop Log** to flush and close the file.
-
-Logging follows the Text receive convention: CR/LF/TAB are preserved and other
-control bytes are written as `.`.
-
-`Ctrl+S` saves the retained RX history as text. This can be used when output
-was received before live logging was started.
-
-### Other controls
-
-- **Clear** clears the terminal display.
-- `Ctrl+L` also clears the terminal display.
-- `F5` forces a serial port rescan.
-- The status line shows the current port/settings, connection time, and RX/TX
-  byte counters. While logging it also shows the logged byte count.
 
 ## Testing without serial hardware on Linux
 
@@ -241,4 +266,6 @@ from a shell. For example:
 printf '\x00MPY: test\r\n' > /dev/pts/N
 ```
 
+## License
 
+BSD 3-Clause License.

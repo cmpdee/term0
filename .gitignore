@@ -1,11 +1,57 @@
-/build/
-/build-*/
-/dist/
-/.cache/
-CMakeUserPresets.json
+# Build directories
+build/
+build-*/
+dist/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+*.cmake.user
+
+# Ninja
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# Qt / IDE
 *.user
 *.user.*
 *.autosave
+.qtc_clangd/
+.qt/
+
+# Generated Qt files
+*_autogen/
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Object / binary files
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.app
+*.pdb
+
+# Packaging
 *.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+
+# OS junk
 .DS_Store
 Thumbs.db
+Desktop.ini

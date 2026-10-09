@@ -2,12 +2,19 @@
 
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <QApplication>
+#include <QPalette>
 #include <QCheckBox>
+#include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
 #include <QComboBox>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -17,12 +24,22 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QSpinBox>
+#include <QTabWidget>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QWidget>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <dwmapi.h>
+#endif
 
 namespace {
 constexpr int kFlushIntervalMs = 16;     // ~60 terminal UI updates/sec max
@@ -31,11 +48,65 @@ constexpr int kStatusIntervalMs = 250;
 constexpr int kMaxTerminalChars = 2'000'000;
 constexpr int kMaxDisplayHistoryBytes = 2 * 1024 * 1024;
 constexpr int kMaxCommandHistory = 200;
+constexpr qreal kMinTerminalPointSize = 7.0;
+constexpr qreal kMaxTerminalPointSize = 32.0;
+constexpr qreal kHiddenThemeTerminalBoost = 2.0;
+
+QString settingsFilePath() {
+#ifdef Q_OS_WIN
+    QString base = qEnvironmentVariable("APPDATA");
+    if (base.isEmpty())
+        base = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+#elif defined(Q_OS_LINUX)
+    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+#else
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+#endif
+
+    QDir dir(base);
+    dir.mkpath(QStringLiteral("term0"));
+    return dir.filePath(QStringLiteral("term0/term0.ini"));
+}
+
+#ifdef Q_OS_WIN
+void setWindowsDarkTitleBar(QWidget *widget, bool enabled) {
+    if (!widget)
+        return;
+
+    // Creating the native handle here is intentional: DWM attributes are
+    // applied to the HWND, not to the Qt widget abstraction.
+    HWND hwnd = reinterpret_cast<HWND>(widget->winId());
+    if (!hwnd)
+        return;
+
+    const BOOL value = enabled ? TRUE : FALSE;
+    // 20 is DWMWA_USE_IMMERSIVE_DARK_MODE on current Windows 10/11 builds.
+    // Older Windows 10 builds used 19, so fall back to it if needed.
+    constexpr DWORD kImmersiveDarkMode = 20;
+    constexpr DWORD kImmersiveDarkModeLegacy = 19;
+    HRESULT hr = DwmSetWindowAttribute(hwnd, kImmersiveDarkMode,
+                                       &value, sizeof(value));
+    if (FAILED(hr)) {
+        DwmSetWindowAttribute(hwnd, kImmersiveDarkModeLegacy,
+                              &value, sizeof(value));
+    }
+}
+
+bool systemUsesDarkWindowChrome() {
+    const QColor window = QApplication::palette().color(QPalette::Window);
+    return window.lightness() < 128;
+}
+#else
+void setWindowsDarkTitleBar(QWidget *, bool) {}
+bool systemUsesDarkWindowChrome() { return false; }
+#endif
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+    m_standardUiFont = QApplication::font();
     qRegisterMetaType<SerialSettings>("SerialSettings");
     buildUi();
+    loadPreferences();
 
     m_serialWorker = new SerialWorker;
     m_serialWorker->moveToThread(&m_serialThread);
@@ -63,7 +134,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         m_connected = true;
         m_connectedPort = name;
         m_preferredPort = name;
-        m_connectedBaud = currentSettings().baudRate;
+        m_connectedSettings = currentSettings();
+        m_connectedBaud = m_connectedSettings.baudRate;
         m_rxBytes = 0;
         m_txBytes = 0;
         m_lastElapsedMs = 0;
@@ -155,6 +227,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    savePreferences();
     emit requestStopLog();
     emit requestClose();
     m_serialThread.quit();
@@ -162,7 +235,7 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::buildUi() {
-    setWindowTitle(QStringLiteral("term0 0.7.5"));
+    setWindowTitle(QStringLiteral("term0 0.8.0"));
     resize(900, 600);
 
     auto *central = new QWidget(this);
@@ -183,6 +256,7 @@ void MainWindow::buildUi() {
     m_baud->setCurrentText(QStringLiteral("115200"));
 
     m_connect = new QPushButton(QStringLiteral("Connect"));
+    m_connect->setObjectName(QStringLiteral("connectButton"));
     m_clear = new QPushButton(QStringLiteral("Clear"));
     m_clear->setToolTip(QStringLiteral("Clear terminal (Ctrl+L)"));
 
@@ -213,7 +287,13 @@ void MainWindow::buildUi() {
     // Serial output and especially HEX dump columns require a real
     // fixed-width font. Spaces are then deterministic across platforms and
     // keep the ASCII column aligned better than tab stops would.
-    m_terminal->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    QFont terminalFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    m_defaultTerminalPointSize = terminalFont.pointSizeF() > 0
+        ? terminalFont.pointSizeF()
+        : 10.0;
+    m_terminalPointSize = m_defaultTerminalPointSize;
+    m_terminal->setFont(terminalFont);
+    m_terminal->installEventFilter(this);
 
     auto *bottom = new QHBoxLayout;
     m_input = new QLineEdit;
@@ -272,6 +352,40 @@ void MainWindow::buildUi() {
     auto *refreshShortcut = new QShortcut(QKeySequence(Qt::Key_F5), this);
     connect(refreshShortcut, &QShortcut::activated,
             this, &MainWindow::scanPortsAsync);
+
+    auto *settingsShortcut = new QShortcut(
+        QKeySequence(QStringLiteral("Ctrl+Alt+S")), this);
+    connect(settingsShortcut, &QShortcut::activated,
+            this, &MainWindow::showSerialSettings);
+
+    auto *zoomInShortcut = new QShortcut(QKeySequence(QKeySequence::ZoomIn), this);
+    connect(zoomInShortcut, &QShortcut::activated, this, [this] {
+        adjustTerminalFontSize(1);
+    });
+
+    // Some layouts produce '=' for the physical '+' key unless Shift is held.
+    auto *zoomInEqualsShortcut = new QShortcut(
+        QKeySequence(QStringLiteral("Ctrl+=")), this);
+    connect(zoomInEqualsShortcut, &QShortcut::activated, this, [this] {
+        adjustTerminalFontSize(1);
+    });
+
+    auto *zoomOutShortcut = new QShortcut(QKeySequence(QKeySequence::ZoomOut), this);
+    connect(zoomOutShortcut, &QShortcut::activated, this, [this] {
+        adjustTerminalFontSize(-1);
+    });
+
+    auto *zoomResetShortcut = new QShortcut(
+        QKeySequence(QStringLiteral("Ctrl+0")), this);
+    connect(zoomResetShortcut, &QShortcut::activated,
+            this, &MainWindow::resetTerminalFontSize);
+
+    auto *hiddenThemeShortcut = new QShortcut(
+        QKeySequence(QStringLiteral("Ctrl+Alt+0")), this);
+    connect(hiddenThemeShortcut, &QShortcut::activated,
+            this, &MainWindow::toggleHiddenTheme);
+
+    updateConnectAppearance();
 }
 
 QString MainWindow::portLabel(const QSerialPortInfo &info) {
@@ -326,12 +440,450 @@ void MainWindow::applyScannedPorts() {
 }
 
 SerialSettings MainWindow::currentSettings() const {
-    SerialSettings s;
+    SerialSettings s = m_serialOptions;
     s.portName = m_ports->currentData().toString();
     if (s.portName.isEmpty())
         s.portName = m_ports->currentText().trimmed();
     s.baudRate = m_baud->currentData().toInt();
     return s;
+}
+
+void MainWindow::loadPreferences() {
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+
+    const QString savedPort = settings.value(QStringLiteral("serial/port")).toString();
+    if (!savedPort.isEmpty()) {
+        m_preferredPort = savedPort;
+        m_ports->setEditText(savedPort);
+    }
+
+    const qint32 savedBaud = settings.value(
+        QStringLiteral("serial/baud"), QSerialPort::Baud115200).toInt();
+    int baudIndex = m_baud->findData(savedBaud);
+    if (baudIndex < 0) {
+        m_baud->addItem(QString::number(savedBaud), savedBaud);
+        baudIndex = m_baud->count() - 1;
+    }
+    m_baud->setCurrentIndex(baudIndex);
+
+    m_serialOptions.dataBits = static_cast<QSerialPort::DataBits>(
+        settings.value(QStringLiteral("serial/dataBits"),
+                       static_cast<int>(QSerialPort::Data8)).toInt());
+    m_serialOptions.parity = static_cast<QSerialPort::Parity>(
+        settings.value(QStringLiteral("serial/parity"),
+                       static_cast<int>(QSerialPort::NoParity)).toInt());
+    m_serialOptions.stopBits = static_cast<QSerialPort::StopBits>(
+        settings.value(QStringLiteral("serial/stopBits"),
+                       static_cast<int>(QSerialPort::OneStop)).toInt());
+    m_serialOptions.flowControl = static_cast<QSerialPort::FlowControl>(
+        settings.value(QStringLiteral("serial/flowControl"),
+                       static_cast<int>(QSerialPort::NoFlowControl)).toInt());
+    m_serialOptions.dataTerminalReady = settings.value(
+        QStringLiteral("serial/dtr"), true).toBool();
+    m_serialOptions.requestToSend = settings.value(
+        QStringLiteral("serial/rts"), false).toBool();
+
+    m_terminalPointSize = settings.value(
+        QStringLiteral("ui/terminalFontPointSize"),
+        m_defaultTerminalPointSize).toDouble();
+    m_terminalPointSize = qBound(kMinTerminalPointSize,
+                                 m_terminalPointSize,
+                                 kMaxTerminalPointSize);
+
+    m_logFormat = qBound(0, settings.value(
+        QStringLiteral("log/format"), 0).toInt(), 2);
+    m_logTimestamps = settings.value(
+        QStringLiteral("log/timestamps"), false).toBool();
+
+    applyTerminalFont();
+}
+
+void MainWindow::savePreferences() const {
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    const SerialSettings serial = currentSettings();
+    settings.setValue(QStringLiteral("serial/port"), serial.portName);
+    settings.setValue(QStringLiteral("serial/baud"), serial.baudRate);
+    settings.setValue(QStringLiteral("serial/dataBits"),
+                      static_cast<int>(serial.dataBits));
+    settings.setValue(QStringLiteral("serial/parity"),
+                      static_cast<int>(serial.parity));
+    settings.setValue(QStringLiteral("serial/stopBits"),
+                      static_cast<int>(serial.stopBits));
+    settings.setValue(QStringLiteral("serial/flowControl"),
+                      static_cast<int>(serial.flowControl));
+    settings.setValue(QStringLiteral("serial/dtr"), serial.dataTerminalReady);
+    settings.setValue(QStringLiteral("serial/rts"), serial.requestToSend);
+    settings.setValue(QStringLiteral("ui/terminalFontPointSize"),
+                      m_terminalPointSize);
+    settings.setValue(QStringLiteral("log/format"), m_logFormat);
+    settings.setValue(QStringLiteral("log/timestamps"), m_logTimestamps);
+}
+
+QString MainWindow::framingSummary() const {
+    const SerialSettings &s = m_connected ? m_connectedSettings : m_serialOptions;
+
+    QString dataBits;
+    switch (s.dataBits) {
+    case QSerialPort::Data5: dataBits = QStringLiteral("5"); break;
+    case QSerialPort::Data6: dataBits = QStringLiteral("6"); break;
+    case QSerialPort::Data7: dataBits = QStringLiteral("7"); break;
+    default: dataBits = QStringLiteral("8"); break;
+    }
+
+    QString parity;
+    switch (s.parity) {
+    case QSerialPort::EvenParity: parity = QStringLiteral("E"); break;
+    case QSerialPort::OddParity: parity = QStringLiteral("O"); break;
+    case QSerialPort::SpaceParity: parity = QStringLiteral("S"); break;
+    case QSerialPort::MarkParity: parity = QStringLiteral("M"); break;
+    default: parity = QStringLiteral("N"); break;
+    }
+
+    QString stopBits;
+    switch (s.stopBits) {
+    case QSerialPort::TwoStop: stopBits = QStringLiteral("2"); break;
+    case QSerialPort::OneAndHalfStop: stopBits = QStringLiteral("1.5"); break;
+    default: stopBits = QStringLiteral("1"); break;
+    }
+
+    return QStringLiteral("%1-%2-%3").arg(dataBits, parity, stopBits);
+}
+
+void MainWindow::showSerialSettings() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Settings"));
+    dialog.setModal(true);
+    dialog.resize(430, 330);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *tabs = new QTabWidget(&dialog);
+    layout->addWidget(tabs, 1);
+
+    // Serial tab ----------------------------------------------------------
+    auto *serialPage = new QWidget;
+    auto *serialLayout = new QVBoxLayout(serialPage);
+    auto *serialForm = new QFormLayout;
+
+    auto *dataBits = new QComboBox;
+    dataBits->addItem(QStringLiteral("5"), static_cast<int>(QSerialPort::Data5));
+    dataBits->addItem(QStringLiteral("6"), static_cast<int>(QSerialPort::Data6));
+    dataBits->addItem(QStringLiteral("7"), static_cast<int>(QSerialPort::Data7));
+    dataBits->addItem(QStringLiteral("8"), static_cast<int>(QSerialPort::Data8));
+
+    auto *parity = new QComboBox;
+    parity->addItem(QStringLiteral("None"), static_cast<int>(QSerialPort::NoParity));
+    parity->addItem(QStringLiteral("Even"), static_cast<int>(QSerialPort::EvenParity));
+    parity->addItem(QStringLiteral("Odd"), static_cast<int>(QSerialPort::OddParity));
+    parity->addItem(QStringLiteral("Mark"), static_cast<int>(QSerialPort::MarkParity));
+    parity->addItem(QStringLiteral("Space"), static_cast<int>(QSerialPort::SpaceParity));
+
+    auto *stopBits = new QComboBox;
+    stopBits->addItem(QStringLiteral("1"), static_cast<int>(QSerialPort::OneStop));
+    stopBits->addItem(QStringLiteral("1.5"), static_cast<int>(QSerialPort::OneAndHalfStop));
+    stopBits->addItem(QStringLiteral("2"), static_cast<int>(QSerialPort::TwoStop));
+
+    auto *flow = new QComboBox;
+    flow->addItem(QStringLiteral("None"), static_cast<int>(QSerialPort::NoFlowControl));
+    flow->addItem(QStringLiteral("Hardware (RTS/CTS)"),
+                  static_cast<int>(QSerialPort::HardwareControl));
+    flow->addItem(QStringLiteral("Software (XON/XOFF)"),
+                  static_cast<int>(QSerialPort::SoftwareControl));
+
+    auto *dtr = new QCheckBox(QStringLiteral("Enabled"));
+    auto *rts = new QCheckBox(QStringLiteral("Enabled"));
+
+    auto setComboData = [](QComboBox *combo, int value) {
+        const int index = combo->findData(value);
+        if (index >= 0)
+            combo->setCurrentIndex(index);
+    };
+
+    setComboData(dataBits, static_cast<int>(m_serialOptions.dataBits));
+    setComboData(parity, static_cast<int>(m_serialOptions.parity));
+    setComboData(stopBits, static_cast<int>(m_serialOptions.stopBits));
+    setComboData(flow, static_cast<int>(m_serialOptions.flowControl));
+    dtr->setChecked(m_serialOptions.dataTerminalReady);
+    rts->setChecked(m_serialOptions.requestToSend);
+
+    auto updateRtsState = [flow, rts] {
+        const auto selected = static_cast<QSerialPort::FlowControl>(
+            flow->currentData().toInt());
+        rts->setEnabled(selected != QSerialPort::HardwareControl);
+        rts->setToolTip(selected == QSerialPort::HardwareControl
+            ? QStringLiteral("RTS is controlled automatically by hardware flow control")
+            : QString());
+    };
+    updateRtsState();
+    connect(flow, &QComboBox::currentIndexChanged, &dialog,
+            [updateRtsState](int) { updateRtsState(); });
+
+    serialForm->addRow(QStringLiteral("Data bits:"), dataBits);
+    serialForm->addRow(QStringLiteral("Parity:"), parity);
+    serialForm->addRow(QStringLiteral("Stop bits:"), stopBits);
+    serialForm->addRow(QStringLiteral("Flow control:"), flow);
+    serialForm->addRow(QStringLiteral("DTR:"), dtr);
+    serialForm->addRow(QStringLiteral("RTS:"), rts);
+    serialLayout->addLayout(serialForm);
+
+    if (m_connected) {
+        auto *note = new QLabel(QStringLiteral(
+            "Disconnect before changing serial parameters."));
+        note->setWordWrap(true);
+        serialLayout->addWidget(note);
+        dataBits->setEnabled(false);
+        parity->setEnabled(false);
+        stopBits->setEnabled(false);
+        flow->setEnabled(false);
+        dtr->setEnabled(false);
+        rts->setEnabled(false);
+    }
+    serialLayout->addStretch();
+    tabs->addTab(serialPage, QStringLiteral("Serial"));
+
+    // View tab ------------------------------------------------------------
+    auto *viewPage = new QWidget;
+    auto *viewLayout = new QVBoxLayout(viewPage);
+    auto *viewForm = new QFormLayout;
+    auto *fontSize = new QSpinBox;
+    fontSize->setRange(static_cast<int>(kMinTerminalPointSize),
+                       static_cast<int>(kMaxTerminalPointSize));
+    fontSize->setSuffix(QStringLiteral(" pt"));
+    fontSize->setValue(qRound(m_terminalPointSize));
+    viewForm->addRow(QStringLiteral("Terminal font size:"), fontSize);
+    viewLayout->addLayout(viewForm);
+    viewLayout->addStretch();
+
+    auto *shortcutHint = new QLabel(QStringLiteral("hack the planet: s -> 0"));
+    shortcutHint->setAlignment(Qt::AlignRight);
+    shortcutHint->setEnabled(false);
+    viewLayout->addWidget(shortcutHint);
+    tabs->addTab(viewPage, QStringLiteral("View"));
+
+    // Log tab -------------------------------------------------------------
+    auto *logPage = new QWidget;
+    auto *logLayout = new QVBoxLayout(logPage);
+    auto *logForm = new QFormLayout;
+    auto *logFormat = new QComboBox;
+    logFormat->addItem(QStringLiteral("Text"), 0);
+    logFormat->addItem(QStringLiteral("HEX"), 1);
+    logFormat->addItem(QStringLiteral("HEX dump"), 2);
+    logFormat->setCurrentIndex(qBound(0, m_logFormat, 2));
+
+    auto *timestamps = new QCheckBox(QStringLiteral("Enabled"));
+    timestamps->setChecked(m_logTimestamps);
+
+    logForm->addRow(QStringLiteral("Format:"), logFormat);
+    logForm->addRow(QStringLiteral("Timestamps:"), timestamps);
+    logLayout->addLayout(logForm);
+
+    auto *logNote = new QLabel(QStringLiteral(
+        "These options are used when the next live log is started."));
+    logNote->setWordWrap(true);
+    logLayout->addWidget(logNote);
+    logLayout->addStretch();
+    tabs->addTab(logPage, QStringLiteral("Log"));
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    setWindowsDarkTitleBar(&dialog,
+        m_hiddenTheme ? true : systemUsesDarkWindowChrome());
+
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    if (!m_connected) {
+        m_serialOptions.dataBits = static_cast<QSerialPort::DataBits>(
+            dataBits->currentData().toInt());
+        m_serialOptions.parity = static_cast<QSerialPort::Parity>(
+            parity->currentData().toInt());
+        m_serialOptions.stopBits = static_cast<QSerialPort::StopBits>(
+            stopBits->currentData().toInt());
+        m_serialOptions.flowControl = static_cast<QSerialPort::FlowControl>(
+            flow->currentData().toInt());
+        m_serialOptions.dataTerminalReady = dtr->isChecked();
+        m_serialOptions.requestToSend = rts->isChecked();
+    }
+
+    m_terminalPointSize = qBound(kMinTerminalPointSize,
+                                 static_cast<qreal>(fontSize->value()),
+                                 kMaxTerminalPointSize);
+    m_logFormat = logFormat->currentData().toInt();
+    m_logTimestamps = timestamps->isChecked();
+
+    applyTerminalFont();
+    savePreferences();
+    updateSessionStatus();
+    m_status->setText(QStringLiteral("Settings saved"));
+}
+
+void MainWindow::applyTerminalFont() {
+    QFont terminalFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    qreal pointSize = m_terminalPointSize;
+    if (m_hiddenTheme)
+        pointSize += kHiddenThemeTerminalBoost;
+    terminalFont.setPointSizeF(pointSize);
+    terminalFont.setBold(false);
+    m_terminal->setFont(terminalFont);
+}
+
+void MainWindow::adjustTerminalFontSize(int steps) {
+    if (steps == 0)
+        return;
+
+    m_terminalPointSize = qBound(
+        kMinTerminalPointSize,
+        m_terminalPointSize + static_cast<qreal>(steps),
+        kMaxTerminalPointSize);
+    applyTerminalFont();
+
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("ui/terminalFontPointSize"),
+                      m_terminalPointSize);
+}
+
+void MainWindow::resetTerminalFontSize() {
+    m_terminalPointSize = m_defaultTerminalPointSize;
+    applyTerminalFont();
+
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("ui/terminalFontPointSize"),
+                      m_terminalPointSize);
+}
+
+void MainWindow::updateConnectAppearance() {
+    // Keep the standard UI fully native. The alternate display uses one
+    // application-wide palette, so the connection button needs no special
+    // per-state styling there either.
+    m_connect->setStyleSheet(QString());
+}
+
+void MainWindow::applyHiddenTheme(bool enabled) {
+    m_hiddenTheme = enabled;
+
+    setWindowsDarkTitleBar(this,
+        enabled ? true : systemUsesDarkWindowChrome());
+
+    if (!enabled) {
+        setStyleSheet(QString());
+        QApplication::setFont(m_standardUiFont);
+        setFont(m_standardUiFont);
+        for (QWidget *widget : findChildren<QWidget *>())
+            widget->setFont(m_standardUiFont);
+        applyTerminalFont();
+        updateConnectAppearance();
+        return;
+    }
+
+    // A deliberately generic retro-terminal theme. It borrows the idea of a
+    // dark terminal-like UI without reproducing another application's assets.
+    QFont uiFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    if (m_standardUiFont.pointSizeF() > 0)
+        uiFont.setPointSizeF(m_standardUiFont.pointSizeF());
+    QApplication::setFont(uiFont);
+    setFont(uiFont);
+    for (QWidget *widget : findChildren<QWidget *>())
+        widget->setFont(uiFont);
+
+    setStyleSheet(QStringLiteral(R"(
+        QMainWindow, QWidget {
+            background: #070a08;
+            color: #7cff8f;
+        }
+        QLabel, QCheckBox {
+            color: #7cff8f;
+        }
+        QComboBox, QLineEdit, QPlainTextEdit, QSpinBox {
+            background: #020403;
+            color: #7cff8f;
+            border: 1px solid #31533a;
+            border-radius: 0;
+            padding: 3px;
+            selection-background-color: #17351f;
+            selection-color: #a7ffb3;
+        }
+        QComboBox QAbstractItemView {
+            background: #020403;
+            color: #7cff8f;
+            border: 1px solid #31533a;
+            selection-background-color: #17351f;
+            selection-color: #a7ffb3;
+        }
+        QPushButton {
+            background: #070a08;
+            color: #7cff8f;
+            border: 1px solid #31533a;
+            border-radius: 0;
+            padding: 4px 9px;
+        }
+        QPushButton:hover {
+            border-color: #7cff8f;
+            background: #0b120d;
+        }
+        QPushButton:pressed {
+            background: #17351f;
+        }
+        QPushButton:disabled, QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled,
+        QCheckBox:disabled, QLabel:disabled {
+            color: #3d7a49;
+            border-color: #203825;
+        }
+        QCheckBox {
+            spacing: 5px;
+        }
+        QCheckBox::indicator {
+            width: 12px;
+            height: 12px;
+            border: 1px solid #31533a;
+            background: #020403;
+        }
+        QCheckBox::indicator:checked {
+            background: #7cff8f;
+            border-color: #7cff8f;
+        }
+        QStatusBar {
+            background: #020403;
+            color: #7cff8f;
+            border-top: 1px solid #31533a;
+        }
+        QStatusBar QLabel {
+            background: #020403;
+            color: #7cff8f;
+        }
+        QTabWidget::pane {
+            border: 1px solid #31533a;
+            background: #070a08;
+        }
+        QTabBar::tab {
+            background: #020403;
+            color: #7cff8f;
+            border: 1px solid #31533a;
+            padding: 5px 12px;
+            margin-right: 1px;
+        }
+        QTabBar::tab:selected {
+            background: #17351f;
+            border-color: #7cff8f;
+        }
+        QToolTip {
+            background: #020403;
+            color: #7cff8f;
+            border: 1px solid #31533a;
+        }
+    )"));
+
+    applyTerminalFont();
+    updateConnectAppearance();
+}
+
+void MainWindow::toggleHiddenTheme() {
+    applyHiddenTheme(!m_hiddenTheme);
+    m_status->setText(m_hiddenTheme
+        ? QStringLiteral("term0 // alternate display")
+        : QStringLiteral("Standard display"));
 }
 
 void MainWindow::toggleConnection() {
@@ -347,6 +899,7 @@ void MainWindow::toggleConnection() {
     }
 
     m_preferredPort = settings.portName;
+    savePreferences();
     m_status->setText(QStringLiteral("Opening %1…").arg(settings.portName));
     emit requestOpen(settings);
 }
@@ -357,17 +910,29 @@ void MainWindow::toggleLog() {
         return;
     }
 
+    QString defaultName = QStringLiteral("term0-log");
+    if (m_logFormat == 1)
+        defaultName += QStringLiteral("_hex");
+    else if (m_logFormat == 2)
+        defaultName += QStringLiteral("_hexdump");
+
+    if (m_logTimestamps) {
+        defaultName += QStringLiteral("_") +
+            QDateTime::currentDateTime().toString(QStringLiteral("dd_MM_yyyy_HH_mm"));
+    }
+    defaultName += QStringLiteral(".txt");
+
     const QString path = QFileDialog::getSaveFileName(
         this,
-        QStringLiteral("Save RX text log"),
-        QStringLiteral("term0-log.txt"),
-        QStringLiteral("Text log (*.txt);;All files (*)"));
+        QStringLiteral("Save RX log"),
+        defaultName,
+        QStringLiteral("Log file (*.txt);;All files (*)"));
 
     if (path.isEmpty())
         return;
 
     m_status->setText(QStringLiteral("Starting log…"));
-    emit requestStartLog(path);
+    emit requestStartLog(path, m_logFormat, m_logTimestamps);
 }
 
 
@@ -411,6 +976,7 @@ void MainWindow::setConnectedUi(bool connected) {
                                  : QStringLiteral("Connect"));
     m_ports->setEnabled(!connected);
     m_baud->setEnabled(!connected);
+    updateConnectAppearance();
 }
 
 bool MainWindow::parseHexInput(const QString &text, QByteArray &result,
@@ -514,6 +1080,19 @@ void MainWindow::sendInput() {
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_terminal && event->type() == QEvent::Wheel) {
+        auto *wheelEvent = static_cast<QWheelEvent *>(event);
+        if (wheelEvent->modifiers().testFlag(Qt::ControlModifier)) {
+            int delta = wheelEvent->angleDelta().y();
+            if (delta == 0)
+                delta = wheelEvent->pixelDelta().y();
+            if (delta != 0) {
+                adjustTerminalFontSize(delta > 0 ? 1 : -1);
+                return true;
+            }
+        }
+    }
+
     if (watched == m_input && event->type() == QEvent::KeyPress) {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
 
@@ -794,9 +1373,10 @@ void MainWindow::updateSessionStatus() {
 
     QString prefix;
     if (m_connected) {
-        prefix = QStringLiteral("%1 @ %2 8-N-1  ")
+        prefix = QStringLiteral("%1 @ %2 %3  ")
                      .arg(m_connectedPort)
-                     .arg(m_connectedBaud);
+                     .arg(m_connectedBaud)
+                     .arg(framingSummary());
     }
 
     QString log;

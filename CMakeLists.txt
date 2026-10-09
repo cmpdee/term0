@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(term0 VERSION 0.7.5 LANGUAGES CXX)
+project(term0 VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +34,7 @@ endif()
 
 if(WIN32)
     target_sources(term0 PRIVATE term0.rc)
+    target_link_libraries(term0 PRIVATE dwmapi)
     set_target_properties(term0 PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
