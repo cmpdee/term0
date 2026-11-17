@@ -29,6 +29,8 @@ public slots:
     void writeData(const QByteArray &data);
     void startLog(const QString &path, int format, bool timestamps);
     void stopLog();
+    void setDtr(bool enabled);
+    void setRts(bool enabled);
 
 signals:
     void opened(const QString &portName);
@@ -39,9 +41,11 @@ signals:
     void bytesWritten(qint64 count);
     void logStateChanged(bool active, const QString &path);
     void logBytesWritten(qint64 count);
+    void diagnostic(const QString &message);
 
 private:
     void ensurePort();
+    void discardPort();
     void ensureLogFile();
     void closeLogFile();
     static QByteArray sanitizeTextBytes(const QByteArray &data);

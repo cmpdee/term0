@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(term0 VERSION 0.8.0 LANGUAGES CXX)
+project(term0 VERSION 0.9.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,14 +9,18 @@ set(CMAKE_AUTORCC ON)
 
 # Qt 6.2 keeps the project usable on older LTS Linux distributions while all
 # APIs used by term0 are available there.
-find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets SerialPort Concurrent)
+find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets SerialPort Concurrent Network)
 
 qt_add_executable(term0
     main.cpp
     MainWindow.h
     MainWindow.cpp
+    AnsiTerminal.h
+    AnsiTerminal.cpp
     SerialWorker.h
     SerialWorker.cpp
+    ScriptRunner.h
+    ScriptRunner.cpp
     resources.qrc
 )
 
@@ -24,6 +28,7 @@ target_link_libraries(term0 PRIVATE
     Qt6::Widgets
     Qt6::SerialPort
     Qt6::Concurrent
+    Qt6::Network
 )
 
 if(MSVC)

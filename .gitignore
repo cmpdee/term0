@@ -4,20 +4,17 @@ build-*/
 dist/
 out/
 
-# CMake
+# CMake / Ninja
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 CTestTestfile.cmake
-Makefile
 compile_commands.json
-*.cmake.user
-
-# Ninja
-.ninja_deps
-.ninja_log
 build.ninja
 rules.ninja
+.ninja_deps
+.ninja_log
+CMakeUserPresets.json
 
 # Qt / IDE
 *.user
@@ -25,14 +22,10 @@ rules.ninja
 *.autosave
 .qtc_clangd/
 .qt/
+.cache/
 
-# Generated Qt files
+# Generated/binary files
 *_autogen/
-moc_*.cpp
-qrc_*.cpp
-ui_*.h
-
-# Object / binary files
 *.o
 *.obj
 *.a
@@ -41,17 +34,16 @@ ui_*.h
 *.so
 *.dylib
 *.exe
-*.app
 *.pdb
 
-# Packaging
+# Packages
 *.zip
 *.7z
 *.tar
 *.tar.gz
 *.tgz
 
-# OS junk
+# OS files
 .DS_Store
 Thumbs.db
 Desktop.ini

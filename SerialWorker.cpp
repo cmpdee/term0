@@ -165,8 +165,11 @@ void SerialWorker::ensurePort() {
 
     // Created here, after this object has been moved to the serial thread.
     m_port = new QSerialPort(this);
+    emit diagnostic(QStringLiteral("Created new QSerialPort instance"));
 
     connect(m_port, &QSerialPort::readyRead, this, [this] {
+        if (!m_port)
+            return;
         const QByteArray chunk = m_port->readAll();
         if (chunk.isEmpty())
             return;
@@ -182,21 +185,40 @@ void SerialWorker::ensurePort() {
 
     connect(m_port, &QSerialPort::errorOccurred, this,
             [this](QSerialPort::SerialPortError error) {
-        if (error == QSerialPort::NoError)
+        if (error == QSerialPort::NoError || !m_port)
             return;
 
         const QString message = m_port->errorString();
+        emit diagnostic(QStringLiteral("Serial error %1: %2")
+                            .arg(static_cast<int>(error))
+                            .arg(message));
 
         if (error == QSerialPort::ResourceError ||
             error == QSerialPort::DeviceNotFoundError) {
-            if (m_port->isOpen())
-                m_port->close();
+            // Do not reuse a QSerialPort object after a fatal device removal.
+            // Some USB-serial drivers leave the native handle in a bad state;
+            // a fresh object on the next Connect avoids carrying that state.
+            emit diagnostic(QStringLiteral("Fatal serial error: serial object will be recreated"));
+            discardPort();
             emit connectionLost(QStringLiteral("port is no longer available"));
             return;
         }
 
         emit errorOccurred(message);
     });
+}
+
+void SerialWorker::discardPort() {
+    if (!m_port)
+        return;
+
+    QSerialPort *oldPort = m_port;
+    m_port = nullptr;
+    oldPort->disconnect(this);
+    if (oldPort->isOpen())
+        oldPort->close();
+    oldPort->deleteLater();
+    emit diagnostic(QStringLiteral("Discarded QSerialPort instance"));
 }
 
 void SerialWorker::ensureLogFile() {
@@ -213,43 +235,76 @@ void SerialWorker::closeLogFile() {
 }
 
 void SerialWorker::openPort(const SerialSettings &settings) {
+    // Start every explicit connection attempt with a fresh QSerialPort/native
+    // handle. This is cheap and avoids reusing driver state left behind by a
+    // previous failed or removed USB-serial device.
+    if (m_port)
+        discardPort();
     ensurePort();
 
-    if (m_port->isOpen())
-        m_port->close();
-
+    emit diagnostic(QStringLiteral("Open %1 @ %2")
+                        .arg(settings.portName)
+                        .arg(settings.baudRate));
     m_port->setPortName(settings.portName);
-    const bool settingsAccepted =
-        m_port->setBaudRate(settings.baudRate) &&
-        m_port->setDataBits(settings.dataBits) &&
-        m_port->setParity(settings.parity) &&
-        m_port->setStopBits(settings.stopBits) &&
-        m_port->setFlowControl(settings.flowControl);
 
-    if (!settingsAccepted) {
+    const bool baudOk = m_port->setBaudRate(settings.baudRate);
+    emit diagnostic(QStringLiteral("setBaudRate(%1): %2")
+                        .arg(settings.baudRate)
+                        .arg(baudOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    const bool dataBitsOk = m_port->setDataBits(settings.dataBits);
+    emit diagnostic(QStringLiteral("setDataBits(%1): %2")
+                        .arg(static_cast<int>(settings.dataBits))
+                        .arg(dataBitsOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    const bool parityOk = m_port->setParity(settings.parity);
+    emit diagnostic(QStringLiteral("setParity(%1): %2")
+                        .arg(static_cast<int>(settings.parity))
+                        .arg(parityOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    const bool stopBitsOk = m_port->setStopBits(settings.stopBits);
+    emit diagnostic(QStringLiteral("setStopBits(%1): %2")
+                        .arg(static_cast<int>(settings.stopBits))
+                        .arg(stopBitsOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    const bool flowOk = m_port->setFlowControl(settings.flowControl);
+    emit diagnostic(QStringLiteral("setFlowControl(%1): %2")
+                        .arg(static_cast<int>(settings.flowControl))
+                        .arg(flowOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+
+    if (!(baudOk && dataBitsOk && parityOk && stopBitsOk && flowOk)) {
         emit errorOccurred(QStringLiteral("Unsupported serial settings"));
         return;
     }
 
     if (!m_port->open(QIODevice::ReadWrite)) {
-        emit errorOccurred(QStringLiteral("%1: %2")
-                               .arg(settings.portName, m_port->errorString()));
+        const QString error = m_port->errorString();
+        emit diagnostic(QStringLiteral("Open failed: %1").arg(error));
+        emit errorOccurred(QStringLiteral("%1: %2").arg(settings.portName, error));
         return;
     }
+    emit diagnostic(QStringLiteral("Open succeeded"));
 
-    m_port->setDataTerminalReady(settings.dataTerminalReady);
-    if (settings.flowControl != QSerialPort::HardwareControl)
-        m_port->setRequestToSend(settings.requestToSend);
+    const bool dtrOk = m_port->setDataTerminalReady(settings.dataTerminalReady);
+    emit diagnostic(QStringLiteral("DTR -> %1: %2")
+                        .arg(settings.dataTerminalReady ? 1 : 0)
+                        .arg(dtrOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    if (settings.flowControl != QSerialPort::HardwareControl) {
+        const bool rtsOk = m_port->setRequestToSend(settings.requestToSend);
+        emit diagnostic(QStringLiteral("RTS -> %1: %2")
+                            .arg(settings.requestToSend ? 1 : 0)
+                            .arg(rtsOk ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    } else {
+        emit diagnostic(QStringLiteral("RTS managed by hardware flow control"));
+    }
 
     emit opened(settings.portName);
 }
 
 void SerialWorker::closePort() {
     if (!m_port || !m_port->isOpen()) {
+        emit diagnostic(QStringLiteral("Close requested while port is already closed"));
         emit closed();
         return;
     }
 
+    emit diagnostic(QStringLiteral("Closing port"));
     m_port->close();
     emit closed();
 }
@@ -257,11 +312,46 @@ void SerialWorker::closePort() {
 void SerialWorker::writeData(const QByteArray &data) {
     if (!m_port || !m_port->isOpen()) {
         emit errorOccurred(QStringLiteral("Port is not open"));
+        emit diagnostic(QStringLiteral("TX rejected: port is not open"));
         return;
     }
 
-    if (m_port->write(data) < 0)
-        emit errorOccurred(m_port->errorString());
+    emit diagnostic(QStringLiteral("TX request %1 B").arg(data.size()));
+    if (m_port->write(data) < 0) {
+        const QString error = m_port->errorString();
+        emit diagnostic(QStringLiteral("TX failed: %1").arg(error));
+        emit errorOccurred(error);
+    }
+}
+
+void SerialWorker::setDtr(bool enabled) {
+    if (!m_port || !m_port->isOpen()) {
+        emit errorOccurred(QStringLiteral("Port is not open"));
+        return;
+    }
+    const bool ok = m_port->setDataTerminalReady(enabled);
+    emit diagnostic(QStringLiteral("DTR -> %1: %2")
+                        .arg(enabled ? 1 : 0)
+                        .arg(ok ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    if (!ok)
+        emit errorOccurred(QStringLiteral("Failed to set DTR"));
+}
+
+void SerialWorker::setRts(bool enabled) {
+    if (!m_port || !m_port->isOpen()) {
+        emit errorOccurred(QStringLiteral("Port is not open"));
+        return;
+    }
+    if (m_port->flowControl() == QSerialPort::HardwareControl) {
+        emit errorOccurred(QStringLiteral("RTS is controlled by hardware flow control"));
+        return;
+    }
+    const bool ok = m_port->setRequestToSend(enabled);
+    emit diagnostic(QStringLiteral("RTS -> %1: %2")
+                        .arg(enabled ? 1 : 0)
+                        .arg(ok ? QStringLiteral("OK") : QStringLiteral("FAILED")));
+    if (!ok)
+        emit errorOccurred(QStringLiteral("Failed to set RTS"));
 }
 
 void SerialWorker::startLog(const QString &path, int format, bool timestamps) {

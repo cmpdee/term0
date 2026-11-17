@@ -9,6 +9,8 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <memory>
+
 #include "SerialWorker.h"
 
 class QComboBox;
@@ -18,6 +20,10 @@ class QPlainTextEdit;
 class QPushButton;
 class QCheckBox;
 class QEvent;
+class QFile;
+class ScriptRunnerDialog;
+class AnsiTerminalState;
+class QWidget;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -31,6 +37,8 @@ signals:
     void requestWrite(const QByteArray &data);
     void requestStartLog(const QString &path, int format, bool timestamps);
     void requestStopLog();
+    void requestSetDtr(bool enabled);
+    void requestSetRts(bool enabled);
 
 private slots:
     void scanPortsAsync();
@@ -46,6 +54,9 @@ private slots:
     void renderDisplayHistory();
     void showSerialSettings();
     void toggleHiddenTheme();
+    void showScriptRunner();
+    void showKeySequences();
+    void toggleTerminalMode();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -60,6 +71,11 @@ private:
     void adjustTerminalFontSize(int steps);
     void resetTerminalFontSize();
     void updateConnectAppearance();
+    void startDebugLog();
+    void stopDebugLog();
+    void debugLog(const QString &message);
+    QString debugLogPath() const;
+    QString diagnosticsText() const;
     QString framingSummary() const;
     SerialSettings currentSettings() const;
     static QString portLabel(const QSerialPortInfo &info);
@@ -73,6 +89,7 @@ private:
     static QByteArray formatHexDump(const QByteArray &data,
                                     quint64 startOffset);
     void appendHexDumpChunk(const QByteArray &data);
+    void sendSpecialKey(const QString &name);
     static QString formatElapsed(qint64 milliseconds);
 
     QComboBox *m_ports = nullptr;
@@ -118,13 +135,25 @@ private:
     bool m_logActive = false;
     quint64 m_logBytes = 0;
     QString m_logPath;
+    QString m_lastLogDirectory;
+    QString m_lastScriptPath;
     int m_logFormat = 0; // 0 = Text, 1 = HEX, 2 = HEX dump
     bool m_logTimestamps = false;
+    bool m_debugEnabled = false;
+    QFile *m_debugFile = nullptr;
 
     QThread m_serialThread;
     SerialWorker *m_serialWorker = nullptr;
     bool m_connected = false;
     bool m_hiddenTheme = false;
+    ScriptRunnerDialog *m_scriptRunner = nullptr;
+    QWidget *m_keyPanel = nullptr;
+    bool m_terminalMode = false;
+    int m_terminalPreviousRxView = 0;
+    bool m_terminalPreviousTxHex = false;
+    bool m_terminalPreviousCr = true;
+    bool m_terminalPreviousLf = true;
+    std::unique_ptr<AnsiTerminalState> m_ansiState;
     QFont m_standardUiFont;
     qreal m_defaultTerminalPointSize = 10.0;
     qreal m_terminalPointSize = 10.0;
