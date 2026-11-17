@@ -1,6 +1,6 @@
-<img src="assets/term0.png" width="128" align="right" alt="term0 icon">
-
 # term0
+
+<img src="./assets/term0.png" width="112" align="right" alt="term0 icon">
 
 `term0` is a small cross-platform serial terminal written in C++ with Qt 6.
 It is intended for Windows, Linux, and macOS.
@@ -9,6 +9,9 @@ It provides serial port discovery and hot-plug handling, configurable serial
 framing, text and HEX transmit, Text/ANSI/HEX/HEX dump receive views, logging,
 diagnostic logging, command history, common terminal key sequences, and simple
 serial scripting.
+
+**Releases:** [all releases](https://github.com/cmpdee/term0/releases) ·
+[latest release](https://github.com/cmpdee/term0/releases/latest)
 
 ## Contents
 
