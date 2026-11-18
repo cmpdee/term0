@@ -17,6 +17,7 @@ serial scripting.
 
 - [Usage](#usage)
   - [Connecting](#connecting)
+  - [Tabs and sessions](#tabs-and-sessions)
   - [Settings](#settings)
   - [Receive modes](#receive-modes)
   - [Transmit](#transmit)
@@ -27,6 +28,7 @@ serial scripting.
   - [Script Runner](#script-runner)
   - [Updates and version information](#updates-and-version-information)
   - [Other controls](#other-controls)
+- [Alternate themes and custom chrome](#alternate-themes-and-custom-chrome)
 - [Requirements](#requirements)
 - [Build](#build)
 - [Run](#run)
@@ -49,9 +51,28 @@ the same port appears again, it is selected again but is not automatically
 reconnected. After a fatal serial error, the serial port object is discarded
 and a new one is created for the next connection.
 
+
+### Tabs and sessions
+
+`term0` starts with one serial session and keeps the same compact layout used by
+earlier versions. The tab bar is hidden while only one session exists.
+
+Press `Ctrl+Shift+T` to open another independent serial session. The tab bar
+appears automatically when the second session is created. Each tab has its own
+serial connection, port and baud selection, RX/TX state, terminal history,
+command history, logging, Script Runner, Terminal mode, and RX/TX counters.
+
+A tab is initially named `Session N`. After it connects, its title changes to
+the connected serial port and remains there after disconnecting.
+
+Use `Ctrl+W` or the close button on a tab to close the current session. The last
+remaining session is kept open; when only one session remains, the tab bar is
+hidden again. `Ctrl+Tab` and `Ctrl+Shift+Tab` switch between sessions.
+
 ### Settings
 
-Press `Ctrl+Alt+S` to open Settings.
+Press `Ctrl+Alt+S` to open Settings for the active session. Saved values are
+used as defaults for subsequently created sessions.
 
 The **Serial** tab contains:
 
@@ -242,6 +263,12 @@ names are `esc`, `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`,
 `expect` waits for matching RX bytes received after that command starts. `repeat`
 blocks may be nested. **Stop** cancels script execution immediately.
 
+Each session owns its own Script Runner. When switching tabs, the runner belonging
+to the previous tab is hidden and is shown again on return if it was open.
+Its editor and execution state are preserved; an active script continues sending
+to its original serial session even while another tab is selected. Closing a
+session also closes its runner.
+
 The script language does not execute operating-system commands.
 
 ### Updates and version information
@@ -255,6 +282,9 @@ default browser. It does not download or install updates automatically.
 
 ### Other controls
 
+- `Ctrl+Shift+T` opens a new serial session.
+- `Ctrl+W` closes the current tab when more than one session is open.
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` switches between sessions.
 - **Clear** or `Ctrl+L` clears the terminal display.
 - `Ctrl++` / `Ctrl+-` changes the terminal font size.
 - `Ctrl+0` resets the terminal font size.
@@ -268,9 +298,24 @@ default browser. It does not download or install updates automatically.
 
 The RX view, TX HEX mode, CR/LF selection, terminal font size, window geometry,
 serial settings, logging preferences, diagnostic preference, and last script
-path are retained between runs.
+path are retained between runs. Multiple open sessions are intentionally not
+restored automatically on the next launch.
 
-A small clue in the View tab points to one undocumented shortcut.
+Small clues in the View tab point to undocumented display shortcuts.
+
+## Alternate themes and custom chrome
+
+The two optional alternate display themes use green and amber/Flipper-style
+palettes. Hints for their keyboard shortcuts are available in **Settings → View**.
+The native theme retains standard operating-system window decorations.
+
+Both alternate themes use term0's custom-painted window title bar, window
+controls, resize handles, and tabs. **Settings** and **Script Runner** also use
+matching custom title bars. File selection dialogs remain native to the
+operating system. No third-party logos or artwork are used.
+
+The window and dialog chrome is implemented with Qt. Platform window-manager
+behavior can vary, especially on Wayland and multi-monitor HiDPI setups.
 
 ## Requirements
 

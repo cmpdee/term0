@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(term0 VERSION 0.9.1 LANGUAGES CXX)
+project(term0 VERSION 0.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,6 +15,12 @@ qt_add_executable(term0
     main.cpp
     MainWindow.h
     MainWindow.cpp
+    FlipperChrome.h
+    FlipperChrome.cpp
+    ChromeDialog.h
+    ChromeDialog.cpp
+    SessionWidget.h
+    SessionWidget.cpp
     AnsiTerminal.h
     AnsiTerminal.cpp
     SerialWorker.h

@@ -73,7 +73,7 @@ bool specialKeyBytes(const QString &name, QByteArray &bytes, bool &useLineEnding
 }
 }
 
-ScriptRunnerDialog::ScriptRunnerDialog(QWidget *parent) : QDialog(parent) {
+ScriptRunnerDialog::ScriptRunnerDialog(QWidget *parent) : ChromeDialog(parent) {
     setWindowTitle(QStringLiteral("Script Runner"));
     resize(650, 480);
 
@@ -120,6 +120,21 @@ ScriptRunnerDialog::ScriptRunnerDialog(QWidget *parent) : QDialog(parent) {
 
 void ScriptRunnerDialog::setInitialPath(const QString &path) {
     m_path = path;
+    updateTitle();
+}
+
+void ScriptRunnerDialog::setSessionLabel(const QString &label) {
+    m_sessionLabel = label;
+    updateTitle();
+}
+
+void ScriptRunnerDialog::updateTitle() {
+    QString caption = QStringLiteral("Script Runner");
+    if (!m_sessionLabel.isEmpty())
+        caption += QStringLiteral(" — %1").arg(m_sessionLabel);
+    if (!m_path.isEmpty())
+        caption += QStringLiteral(" — %1").arg(QFileInfo(m_path).fileName());
+    setWindowTitle(caption);
 }
 
 void ScriptRunnerDialog::setConnected(bool connected) {
@@ -162,7 +177,7 @@ void ScriptRunnerDialog::openScript() {
     m_editor->setPlainText(QString::fromUtf8(file.readAll()));
     m_path = path;
     emit pathChanged(path);
-    setWindowTitle(QStringLiteral("Script Runner — %1").arg(QFileInfo(path).fileName()));
+    updateTitle();
     m_status->setText(QStringLiteral("Loaded %1").arg(QFileInfo(path).fileName()));
 }
 
@@ -189,7 +204,7 @@ void ScriptRunnerDialog::saveScript() {
     file.close();
     m_path = path;
     emit pathChanged(path);
-    setWindowTitle(QStringLiteral("Script Runner — %1").arg(QFileInfo(path).fileName()));
+    updateTitle();
     m_status->setText(QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
 }
 

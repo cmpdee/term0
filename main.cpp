@@ -7,7 +7,7 @@ int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("term0"));
     QApplication::setOrganizationName(QStringLiteral("term0"));
-    QApplication::setApplicationVersion(QStringLiteral("0.9.1"));
+    QApplication::setApplicationVersion(QStringLiteral("0.10.0"));
 
     // Use dedicated small artwork instead of letting Windows downscale the
     // detailed desktop icon. This keeps the taskbar icon readable at 16-32 px.

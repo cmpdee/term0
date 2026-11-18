@@ -1,0 +1,176 @@
+#pragma once
+
+#include <QElapsedTimer>
+#include <QFutureWatcher>
+#include <QFont>
+#include <QWidget>
+#include <QSerialPortInfo>
+#include <QThread>
+#include <QStringList>
+#include <QTimer>
+
+#include <memory>
+
+#include "SerialWorker.h"
+
+class QComboBox;
+class QLabel;
+class QLineEdit;
+class QPlainTextEdit;
+class QPushButton;
+class QCheckBox;
+class QEvent;
+class QFile;
+class ScriptRunnerDialog;
+class AnsiTerminalState;
+class QWidget;
+
+class SessionWidget final : public QWidget {
+    Q_OBJECT
+public:
+    explicit SessionWidget(const QFont &standardUiFont, QWidget *parent = nullptr);
+    ~SessionWidget() override;
+
+    void setHiddenTheme(bool enabled);
+    void setFlipperTheme(bool enabled);
+    void focusInput();
+    void setSessionActive(bool active);
+    void setSessionLabel(const QString &label);
+
+signals:
+    void requestOpen(const SerialSettings &settings);
+    void requestClose();
+    void requestWrite(const QByteArray &data);
+    void requestStartLog(const QString &path, int format, bool timestamps);
+    void requestStopLog();
+    void requestSetDtr(bool enabled);
+    void requestSetRts(bool enabled);
+    void tabTitleChanged(const QString &title);
+    void hiddenThemeToggleRequested();
+    void flipperThemeToggleRequested();
+
+private slots:
+    void scanPortsAsync();
+    void applyScannedPorts();
+    void toggleConnection();
+    void toggleLog();
+    void saveTextSnapshot();
+    void sendInput();
+    void clearTerminal();
+    void queueIncoming(const QByteArray &data);
+    void flushTerminal();
+    void updateSessionStatus();
+    void renderDisplayHistory();
+    void showSerialSettings();
+    void toggleHiddenTheme();
+    void toggleFlipperTheme();
+    void showScriptRunner();
+    void showKeySequences();
+    void toggleTerminalMode();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
+    void buildUi();
+    void setConnectedUi(bool connected);
+    void loadPreferences();
+    void savePreferences() const;
+    void applyHiddenTheme(bool enabled);
+    void applyFlipperTheme(bool enabled);
+    void applyTerminalFont();
+    void adjustTerminalFontSize(int steps);
+    void resetTerminalFontSize();
+    void updateConnectAppearance();
+    void startDebugLog();
+    void stopDebugLog();
+    void debugLog(const QString &message);
+    QString debugLogPath() const;
+    QString diagnosticsText() const;
+    QString framingSummary() const;
+    SerialSettings currentSettings() const;
+    static QString portLabel(const QSerialPortInfo &info);
+    static QByteArray sanitizeTextBytes(const QByteArray &data);
+    static bool parseHexInput(const QString &text, QByteArray &result,
+                              QString &errorMessage);
+    QByteArray formatHexBytes(const QByteArray &data);
+    static QByteArray formatHexDumpLine(const QByteArray &data,
+                                        quint64 offset,
+                                        bool appendNewline);
+    static QByteArray formatHexDump(const QByteArray &data,
+                                    quint64 startOffset);
+    void appendHexDumpChunk(const QByteArray &data);
+    void sendSpecialKey(const QString &name);
+    static QString formatElapsed(qint64 milliseconds);
+
+    QComboBox *m_ports = nullptr;
+    QComboBox *m_baud = nullptr;
+    QComboBox *m_rxView = nullptr;
+    QPushButton *m_connect = nullptr;
+    QPushButton *m_clear = nullptr;
+    QPushButton *m_log = nullptr;
+    QPlainTextEdit *m_terminal = nullptr;
+    QLineEdit *m_input = nullptr;
+    QPushButton *m_send = nullptr;
+    QCheckBox *m_txHex = nullptr;
+    QCheckBox *m_cr = nullptr;
+    QCheckBox *m_lf = nullptr;
+    QLabel *m_status = nullptr;
+    QLabel *m_sessionStats = nullptr;
+    QWidget *m_contentWidget = nullptr;
+
+    QFutureWatcher<QList<QSerialPortInfo>> m_scanWatcher;
+    QTimer m_autoScanTimer;
+    QTimer m_flushTimer;
+    QTimer m_statusTimer;
+    QElapsedTimer m_connectionElapsed;
+    QByteArray m_rxBuffer;
+    QByteArray m_displayHistory;
+    quint64 m_displayHistoryBaseOffset = 0;
+    QStringList m_lastPortKeys;
+    QString m_preferredPort;
+    QString m_connectedPort;
+    qint32 m_connectedBaud = 0;
+    SerialSettings m_serialOptions;
+    SerialSettings m_connectedSettings;
+    quint64 m_rxBytes = 0;
+    quint64 m_txBytes = 0;
+    qint64 m_lastElapsedMs = 0;
+    QByteArray m_dumpTail;
+    quint64 m_dumpNextOffset = 0;
+    int m_dumpPartialChars = 0;
+
+    QStringList m_commandHistory;
+    int m_historyIndex = 0;
+    QString m_historyDraft;
+
+    bool m_logActive = false;
+    quint64 m_logBytes = 0;
+    QString m_logPath;
+    QString m_lastLogDirectory;
+    QString m_lastScriptPath;
+    int m_logFormat = 0; // 0 = Text, 1 = HEX, 2 = HEX dump
+    bool m_logTimestamps = false;
+    bool m_debugEnabled = false;
+    QFile *m_debugFile = nullptr;
+
+    QThread m_serialThread;
+    SerialWorker *m_serialWorker = nullptr;
+    bool m_connected = false;
+    bool m_hiddenTheme = false;
+    bool m_flipperTheme = false;
+    ScriptRunnerDialog *m_scriptRunner = nullptr;
+    bool m_sessionActive = true;
+    bool m_runnerShownInSession = false;
+    QString m_sessionLabel;
+    QWidget *m_keyPanel = nullptr;
+    bool m_terminalMode = false;
+    int m_terminalPreviousRxView = 0;
+    bool m_terminalPreviousTxHex = false;
+    bool m_terminalPreviousCr = true;
+    bool m_terminalPreviousLf = true;
+    std::unique_ptr<AnsiTerminalState> m_ansiState;
+    QFont m_standardUiFont;
+    qreal m_defaultTerminalPointSize = 10.0;
+    qreal m_terminalPointSize = 10.0;
+};

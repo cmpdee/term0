@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QByteArray>
-#include <QDialog>
+#include "ChromeDialog.h"
 #include <QTimer>
 #include <QString>
 #include <QStringList>
@@ -11,13 +11,14 @@ class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 
-class ScriptRunnerDialog final : public QDialog {
+class ScriptRunnerDialog final : public ChromeDialog {
     Q_OBJECT
 public:
     explicit ScriptRunnerDialog(QWidget *parent = nullptr);
 
     void setConnected(bool connected);
     void setInitialPath(const QString &path);
+    void setSessionLabel(const QString &label);
     void feedRx(const QByteArray &data);
 
 signals:
@@ -83,4 +84,6 @@ private:
     QByteArray m_rxWindow;
     QTimer m_timer;
     QString m_path;
+    QString m_sessionLabel;
+    void updateTitle();
 };
